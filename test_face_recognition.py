@@ -8,37 +8,41 @@ from datetime import datetime
 from deepface import DeepFace
 from flask import Flask, render_template_string
 import threading
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ==================== CONFIGURATION ====================
 class Config:
     # ESP32 Connection
-    ESP32_PORT = 'COM5'  # Change to your ESP32 port (Windows: COM3, Linux: /dev/ttyUSB0, Mac: /dev/cu.usbserial)
-    BAUD_RATE = 115200
+    ESP32_PORT = os.getenv('ESP32_PORT', 'COM5')  # Change to your ESP32 port (Windows: COM3, Linux: /dev/ttyUSB0, Mac: /dev/cu.usbserial)
+    BAUD_RATE = int(os.getenv('BAUD_RATE', 115200))
     
     # Directories
     FACES_DB = 'registered_faces/'
     ATTENDANCE_FILE = 'attendance.csv'
     CAPTURES_FOLDER = 'captured_faces/'
     
-    # DeepFace Settingsq
-    MODEL_NAME = 'Facenet'  # Options: VGG-Face, Facenet, OpenFace, DeepFace
-    DISTANCE_METRIC = 'cosine'  # Options: cosine, euclidean
-    CONFIDENCE_THRESHOLD = 60  # Minimum confidence to recognize (0-100)
+    # DeepFace Settings
+    MODEL_NAME = os.getenv('MODEL_NAME', 'Facenet')  # Options: VGG-Face, Facenet, OpenFace, DeepFace
+    DISTANCE_METRIC = os.getenv('DISTANCE_METRIC', 'cosine')  # Options: cosine, euclidean
+    CONFIDENCE_THRESHOLD = int(os.getenv('CONFIDENCE_THRESHOLD', 60))  # Minimum confidence to recognize (0-100)
     
     # Recognition Settings
-    RECOGNITION_COOLDOWN = 2  # Seconds between auto-recognition
+    RECOGNITION_COOLDOWN = int(os.getenv('RECOGNITION_COOLDOWN', 2))  # Seconds between auto-recognition
     
     # Telegram Bot (Optional)
-    TELEGRAM_ENABLED = True  # Set True to enable
-    TELEGRAM_BOT_TOKEN = '8493226095:AAHAdQ_Yz8aP-uDmk4SrC2AX6dtqfOSputA'  # Get from @BotFather
-    TELEGRAM_CHAT_ID = '6707051159'
+    TELEGRAM_ENABLED = os.getenv('TELEGRAM_ENABLED', 'True').lower() == 'true'  # Set True to enable
+    TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')  # Get from @BotFather
+    TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
     
     # Location
-    LOCATION = "Main Building - Gate A"
+    LOCATION = os.getenv('LOCATION', "Main Building - Gate A")
     
     # Voice Announcements
-    VOICE_ENABLED = True
-    VOICE_RATE = 150  # Speech rate
+    VOICE_ENABLED = os.getenv('VOICE_ENABLED', 'True').lower() == 'true'
+    VOICE_RATE = int(os.getenv('VOICE_RATE', 150))  # Speech rate
 
 # Create necessary folders
 os.makedirs(Config.FACES_DB, exist_ok=True)
