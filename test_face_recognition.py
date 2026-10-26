@@ -1,6 +1,5 @@
 import cv2
 import os
-import serial
 import time
 import requests
 import pyttsx3
@@ -12,12 +11,36 @@ from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+import mysql.connector
 
+def get_db_connection():
+    return mysql.connector.connect(
+        host=os.getenv('DB_HOST', 'localhost'),
+        user=os.getenv('DB_USER', 'root'),
+        password=os.getenv('DB_PASSWORD', ''),
+        database=os.getenv('DB_NAME', 'attendance_db')
+    )
+
+def save_attendance(name, location):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    # Look up the student's details
+    cursor.execute("SELECT gender, section FROM students WHERE name = %s", (name,))
+    info = cursor.fetchone() or {'gender': 'Unknown', 'section': 'Unknown'}
+
+    now = datetime.now()
+    cursor.execute(
+        """INSERT INTO attendance (name, gender, section, date, time, location)
+           VALUES (%s, %s, %s, %s, %s, %s)""",
+        (name, info['gender'], info['section'],
+         now.date(), now.strftime('%I:%M:%S %p'), location)
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
 # ==================== CONFIGURATION ====================
 class Config:
-    # ESP32 Connection
-    ESP32_PORT = os.getenv('ESP32_PORT', 'COM5')  # Change to your ESP32 port (Windows: COM3, Linux: /dev/ttyUSB0, Mac: /dev/cu.usbserial)
-    BAUD_RATE = int(os.getenv('BAUD_RATE', 115200))
     
     # Directories
     FACES_DB = 'registered_faces/'
@@ -38,8 +61,7 @@ class Config:
     TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
     
     # Location
-    LOCATION = os.getenv('LOCATION', "Main Building - Gate A")
-    
+    LOCATION = os.getenv('LOCATION', "Philippine College of Technology - Entrance Hallway")    
     # Voice Announcements
     VOICE_ENABLED = os.getenv('VOICE_ENABLED', 'True').lower() == 'true'
     VOICE_RATE = int(os.getenv('VOICE_RATE', 150))  # Speech rate
@@ -48,36 +70,14 @@ class Config:
 os.makedirs(Config.FACES_DB, exist_ok=True)
 os.makedirs(Config.CAPTURES_FOLDER, exist_ok=True)
 
-# ==================== ESP32 CONNECTION ====================
+# ==================== ESP32 CONNECTION (DISABLED) ====================
 class ESP32Controller:
-    def __init__(self):
-        self.serial = None
-        self.connect()
-    
-    def connect(self):
-        try:
-            self.serial = serial.Serial(Config.ESP32_PORT, Config.BAUD_RATE, timeout=1)
-            time.sleep(2)  # Wait for ESP32 to initialize
-            print(f"✅ Connected to ESP32 on {Config.ESP32_PORT}")
-            return True
-        except Exception as e:
-            print(f"❌ Error connecting to ESP32: {e}")
-            print(f"💡 Make sure ESP32 is connected to {Config.ESP32_PORT}")
-            return False
-    
+    """Stand-in so the rest of the code works without hardware."""
     def send_command(self, command):
-        if self.serial and self.serial.is_open:
-            try:
-                self.serial.write(f"{command}\n".encode())
-                return True
-            except Exception as e:
-                print(f"⚠️ Error sending command: {e}")
-                return False
-        return False
-    
+        return True
+
     def close(self):
-        if self.serial and self.serial.is_open:
-            self.serial.close()
+        pass
 
 # ==================== VOICE ENGINE ====================
 class VoiceAnnouncer:
@@ -106,40 +106,39 @@ class TelegramNotifier:
         self.enabled = Config.TELEGRAM_ENABLED
         self.bot_token = Config.TELEGRAM_BOT_TOKEN
         self.chat_id = Config.TELEGRAM_CHAT_ID
-    
+
     def send_photo(self, name, image_path):
         if not self.enabled:
             return
-        
+
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendPhoto"
-            
+
             with open(image_path, 'rb') as photo:
                 files = {'photo': photo}
                 data = {
                     'chat_id': self.chat_id,
-                    'caption': f"✅ {name} arrived at {datetime.now().strftime('%H:%M:%S')}\n📍 {Config.LOCATION}"
+                    'caption': f"✅ {name} arrived at {datetime.now().strftime('%I:%M:%S %p')}\n📍 {Config.LOCATION}"
                 }
-                response = requests.post(url, files=files, data=data, timeout=5)
-                
+                response = requests.post(url, files=files, data=data, timeout=20)
+
             if response.status_code == 200:
                 print(f"📱 Telegram notification sent for {name}")
             else:
                 print(f"⚠️ Telegram failed: {response.text}")
         except Exception as e:
             print(f"⚠️ Telegram error: {e}")
-    
+
     def send_message(self, message):
         if not self.enabled:
             return
-        
+
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
             data = {'chat_id': self.chat_id, 'text': message}
-            requests.post(url, data=data, timeout=5)
-        except:
+            requests.post(url, data=data, timeout=20)
+        except Exception:
             pass
-
 # ==================== WEB DASHBOARD ====================
 class WebDashboard:
     def __init__(self):
@@ -219,7 +218,7 @@ class WebDashboard:
                         <div class="stat-label">Total Present Today</div>
                     </div>
                     <div class="stat-box">
-                        <div class="stat-number">''' + datetime.now().strftime('%H:%M') + '''</div>
+                        <div class="stat-number">''' + datetime.now().strftime('%I:%M %p') + '''</div>
                         <div class="stat-label">Current Time</div>
                     </div>
                     <div class="stat-box">
@@ -280,7 +279,7 @@ class AttendanceManager:
             with open(Config.ATTENDANCE_FILE, 'w') as f:
                 f.write("Name,Date,Time,Location\n")
     
-    def mark_attendance(self, name, frame):
+    def mark_attendance(self, name, location, frame):
         if name in self.marked_today:
             print(f"⚠️ {name} already marked present today!")
             self.esp32.send_command(f"ALREADY:{name}")
@@ -290,8 +289,7 @@ class AttendanceManager:
         # Save timestamp
         now = datetime.now()
         date_str = now.strftime("%Y-%m-%d")
-        time_str = now.strftime("%H:%M:%S")
-        
+        time_str = now.strftime('%I:%M:%S %p')        
         # Save captured photo
         photo_filename = os.path.join(
             Config.CAPTURES_FOLDER,
@@ -302,7 +300,13 @@ class AttendanceManager:
         # Write to CSV
         with open(Config.ATTENDANCE_FILE, 'a') as f:
             f.write(f"{name},{date_str},{time_str},{Config.LOCATION}\n")
-        
+
+        # Save to MySQL (XAMPP)
+        try:
+            save_attendance(name, location)
+        except Exception as e:
+            print(f"Database error: {e}")
+
         # Mark as present
         self.marked_today.add(name)
         
@@ -544,7 +548,7 @@ class SmartAttendAI:
                 if name and confidence > Config.CONFIDENCE_THRESHOLD:
                     print(f"✅ Recognized: {name} ({confidence:.1f}%)")
                     print(f"😊 Emotion: {emotion}")
-                    self.attendance.mark_attendance(name, frame)
+                    self.attendance.mark_attendance(name, Config.LOCATION, frame)
                 else:
                     print("❌ Unknown face detected!")
                     self.attendance.send_unknown()
